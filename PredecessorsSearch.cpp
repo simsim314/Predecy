@@ -4,10 +4,12 @@
 #include <vector>
 #include <algorithm>
 #include <time.h>     
-#include <omp.h>
+//#include <omp.h>
 #include <string> 
 #include <fstream>
 #include <map> 
+#include "Common.h"
+#include <math.h>
 
 class ScoredTile
 {
@@ -180,7 +182,9 @@ public:
 	std::vector<std::map<int, std::vector<ScoredTile*> > > tileDownLeft;
 	std::vector<std::map<int, std::vector<ScoredTile*> > > tileDownRight;
 	
-	void Load(std::string fname, std::vector<ScoredTile*>& vec)
+	std::vector<ScoredTile*> scoreVec;
+	
+	void Load(std::string fname)
 	{
 		std::ifstream infile(fname.c_str());
 		unsigned long long a;
@@ -188,12 +192,12 @@ public:
 		
 		while (infile >> a)
 		{
-			vec.push_back(new ScoredTile(idx, a));
+			scoreVec.push_back(new ScoredTile(idx, a));
 			idx++;
 		}
 		
 		//vec[0] = 2^63 - 1 (just max value as stats were ignoring it). 
-		vec[0]->score = 9223372036854775807ULL;
+		scoreVec[0]->score = 9223372036854775807ULL;
 	}
 	
 	void InitTileData(std::vector<ScoredTile*>& vec, const std::vector<unsigned int>& ones)
@@ -280,14 +284,13 @@ public:
 	void Init(std::string fname, const std::vector<unsigned int>& ones)
 	{
 		
-		std::vector<ScoredTile*> vec;
 		
 		std::cout << "Loading...\n";
-		Load(fname, vec);
+		Load(fname);
 		std::cout << "Initializing Tiles...\n";
-		InitTileData(vec, ones);
+		InitTileData(scoreVec, ones);
 		std::cout << "Initializing Sorted Tiles...\n";
-		InitSortedTile(vec);
+		InitSortedTile(scoreVec);
 		std::cout << "Initializing Side Tiles...\n";
 		InitSideTiles();
 		std::cout << "Initializing RSide  Tiles...\n";
@@ -454,6 +457,36 @@ public:
 		height = -1;
 	}
 	
+	void ReInit(int in_maxDepth)
+	{
+		maxDepth = in_maxDepth;
+		curIdx = 0;
+	}
+	
+	double ResultScore(std::vector<std::vector<bool> >& vec, const std::vector<unsigned int>& ones)
+	{
+		double logScoreSum = 0;
+		
+		for(int i = 0; i < vec.size() - 5; i++)
+		{	for(int j = 0; j < vec[i].size() - 5; j++)
+			{
+				int key = Key(vec, j, i, ones, 5);
+				logScoreSum += 10.0 / log(2.0 + (double)tileMan->scoreVec[key]->score);
+			}
+		}
+		/*
+		for(int i = 0; i < vec.size(); i++)
+		{	
+			for(int j = 0; j < vec[i].size(); j++)
+			{
+				if(vec[i][j])
+					logScoreSum += 1000.0;
+			}
+		}
+		*/
+		return logScoreSum;
+	}
+	
 	//Lower better
 	int ResultScore()
 	{
@@ -461,9 +494,7 @@ public:
 		
 		for(int i = 0; i <= curIdx; i++)
 		{
-			int curDep = trackerData[i]->CurVal()->depth;
-		
-			totalDepth += curDep;
+			totalDepth += trackerData[i]->CurVal()->depth;
 		}
 		
 		return totalDepth;
@@ -614,132 +645,134 @@ public:
 	}
 };
 
-void PrintDataVec(std::vector<std::vector<bool> >& keyVals)
+void GenerateSetup(BacktrackerSearch& srch, std::vector<std::vector<bool> >&vec,int minx, int miny, int maxx, int maxy, const std::vector<unsigned int>& ones)
 {
-
-	for(int y = 0; y < keyVals.size(); y++)
+	while((maxx - minx + 1) % 3 != 0)
+		maxx++;
+	
+	while((maxy - miny + 1) % 3 != 0)
+		maxy++;
+	
+	srch.SetupBox((maxx - minx + 1) / 3, (maxy - miny + 1) / 3);
+	
+	for(int y = miny; y < maxy; y += 3)
 	{
-		for(int x = 0; x < keyVals[y].size(); x++)
+		for(int x = minx; x < maxx; x += 3)
 		{
-			if(keyVals[y][x])
-				std::cout << "O";
-			else 
-				std::cout << ".";
+			int key = Key(vec, x, y, ones, 3);
+			srch.SetupBoxValue((x - minx) / 3 + 1, (y - miny) / 3 + 1, key);
 		}
-		
-		std::cout << "\n";
 	}
+	
+	
 }
-int main()
+
+int CreateSetup(BacktrackerSearch& srch, const char* rle, const std::vector<unsigned int>& ones)
+{
+	std::vector<std::vector<bool> > vec;
+	Init(vec, 150);
+	int minx, miny, maxx, maxy;
+	
+	Parse(vec, rle, 5, 5, minx, miny, maxx, maxy);
+	GenerateSetup(srch, vec, minx - 1, miny - 1, maxx + 1, maxy + 1, ones);
+}
+
+int CreateSetup(BacktrackerSearch& srch, std::vector<std::vector<bool> >& solution, const std::vector<unsigned int>& ones)
+{
+	std::vector<std::vector<bool> > vec;
+	Init(vec, 150);
+	int minx, miny, maxx, maxy;
+	PlaceState(vec, solution, 5, 5, minx, miny, maxx, maxy);
+	GenerateSetup(srch, vec, minx - 1, miny - 1, maxx + 1, maxy + 1, ones);
+}
+
+void Iterate( BacktrackerSearch& srch,  const std::vector<unsigned int>& ones, std::vector<std::vector<bool> >& solution)
+{
+	std::vector< std::pair< double, std::vector<std::vector<bool> > > > results;
+	//std::vector< std::pair< int, std::vector<std::vector<bool> > > > results;
+	int curMaxDepth = 10;
+	
+	while(true)
+	{
+		while(true)
+		{
+			int next = srch.StepNext();
+			
+			if(next == 1)
+			{	
+				
+				std::vector<std::vector<bool> > vec;
+				srch.FillDataVec(ones, vec);
+				//int score = srch.ResultScore();
+					
+				double score = srch.ResultScore(vec, ones);
+				
+				results.push_back(std::pair<double, std::vector<std::vector<bool> > >(score, vec));
+				//results.push_back(std::pair<int, std::vector<std::vector<bool> > >(score, vec));
+				
+				if(results.size() % 50000 == 0)
+				{
+					std::cout << "Found "<< results.size() << " solutions\n";
+				}
+			}
+			
+			if(next == -1 || results.size() > 500000)
+				break;
+		}
+	
+		if(results.size() < 1000)
+		{
+			std::cout << "max Depth: " << curMaxDepth << " was insufficient, found only " << results.size() << " solutions\n";
+			results.clear();
+			curMaxDepth += 1;
+			srch.ReInit(curMaxDepth);
+		}
+		else
+		{	
+			break;
+		}
+	}	
+	
+	std::sort(results.begin(), results.end());
+	solution = results[0].second; 
+	
+}
+
+int main(int argc, char *argv[])
 {
 	 std::vector<unsigned int> ones; 
 	
 	for(int i = 0; i < 25; i++)
 		ones.push_back(1 << i);					
 		
-	std::vector<ScoredTile*> vec;
-	//Load("stats_bck.txt", vec);
+	if(argc != 2)
+	{
+		std::cout << "Usage: PredecessorSearch.exe <rle>";
+		return -1;
+	}
+	
 	TileManager tileMan; 
 	tileMan.Init("stats.txt", ones);
 	
+	int curMaxDepth = 10;
+	
 	BacktrackerSearch srch;
-	srch.Init(&tileMan, 320);
-	srch.SetupBox(3, 7);
-	srch.SetupBoxValue(1, 1, 256);
-	srch.SetupBoxValue(2, 1, 0);
-	srch.SetupBoxValue(3, 1, 0);
-	srch.SetupBoxValue(1, 2, 256);
-	srch.SetupBoxValue(2, 2, 27);
-	srch.SetupBoxValue(3, 2, 0);
-	srch.SetupBoxValue(1, 3, 0);
-	srch.SetupBoxValue(2, 3, 314);
-	srch.SetupBoxValue(3, 3, 0);
-	srch.SetupBoxValue(1, 4, 0);
-	srch.SetupBoxValue(2, 4, 340);
-	srch.SetupBoxValue(3, 4, 1);
-	srch.SetupBoxValue(1, 5, 0);
-	srch.SetupBoxValue(2, 5, 101);
-	srch.SetupBoxValue(3, 5, 0);
-	srch.SetupBoxValue(1, 6, 0);
-	srch.SetupBoxValue(2, 6, 118);
-	srch.SetupBoxValue(3, 6, 0);
-	srch.SetupBoxValue(1, 7, 0);
-	srch.SetupBoxValue(2, 7, 0);
-	srch.SetupBoxValue(3, 7, 0);
+	srch.Init(&tileMan, curMaxDepth);
+	CreateSetup(srch, argv[1], ones);
 	
-	std::vector< std::pair< int, std::vector<std::vector<bool> > > > results;
-	
-	while(true)
+	for(int i = 0; i < 50; i++)
 	{
-		int next = srch.StepNext();
-		
-		if(next == 1)
-		{	
-			std::vector<std::vector<bool> > vec;
-			srch.FillDataVec(ones, vec);
-			int score = srch.ResultScore();
-			
-			results.push_back(std::pair<int, std::vector<std::vector<bool> > >(score, vec));
-			
-			if(results.size() % 1000 == 0)
-			{
-				std::cout << "Fount "<< results.size() << " solutions\n";
-			}
-		}
-		
-		if(next == -1 || results.size() > 1000000)
-			break;
-	}
-	
-	std::sort(results.begin(), results.end());
-	
-	std::cout << "\n\n";
-	
-	int idx = results.size();
-
-	if(idx > 100)
-		idx = 100;
-		
-	for(int i = 0; i < idx; i++)
-	{
-		PrintDataVec(results[i].second);
-		std::cout << "\n\n\n\n\n" ;
+		std::vector<std::vector<bool> > solution;
+		Iterate(srch, ones, solution);
+		std::cout << "Found solution on Iter: " << i << "\n\n";
+		Print(solution);
+		std::cout << "\n\n";
+		srch = BacktrackerSearch();
+		srch.Init(&tileMan, curMaxDepth);
+		CreateSetup(srch, solution, ones);
 	}
 	
 	std::cout << "Finished...";
 	getchar();
-	
-	/*
-	std::cout << "Size:" << tileMan.sortedTile[idx1].size() << "\n\n";
-	
-	tileMan.sortedTile[idx1][0]->PrintInnerKey(ones);
-	std::cout << "\n\n";
-	
-	for(int i = 0; i < 10; i++)
-	{
-		tileMan.sortedTile[idx1][i]->PrintKey(ones);
-		std::cout << "\n Tile: "<<  i <<"  \n";
-		
-		int max = 10;
-		
-		
-		for(int j = 0; j < 10; j++)
-		{
-			if(j == tileMan.tileLeft[idx2][tileMan.sortedTile[idx1][i]->righKey].size())
-			{
-				std::cout << "\nBreaked at " << j << "\n\n";
-				break;
-			}
-				
-			tileMan.tileLeft[idx2][tileMan.sortedTile[idx1][i]->righKey][j]->PrintKey(ones);
-			std::cout << "\n\n";
-			
-		}
-		
-	}
-	
-	getchar();
-	
-	getchar();
-	*/
+	return 1;
 }
