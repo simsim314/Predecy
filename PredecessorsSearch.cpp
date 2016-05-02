@@ -667,23 +667,18 @@ void GenerateSetup(BacktrackerSearch& srch, std::vector<std::vector<bool> >&vec,
 	
 }
 
-int CreateSetup(BacktrackerSearch& srch, const char* rle, const std::vector<unsigned int>& ones)
+int CreateSetup(BacktrackerSearch& srch, const char* rle, const std::vector<unsigned int>& ones, std::vector<std::vector<bool> >& parsed, int& minx, int& miny, int& maxx, int& maxy)
 {
-	std::vector<std::vector<bool> > vec;
-	Init(vec, 150);
-	int minx, miny, maxx, maxy;
-	
-	Parse(vec, rle, 5, 5, minx, miny, maxx, maxy);
-	GenerateSetup(srch, vec, minx - 1, miny - 1, maxx + 1, maxy + 1, ones);
+	Init(parsed, 150);
+	Parse(parsed, rle, 10, 10, minx, miny, maxx, maxy);
+	GenerateSetup(srch, parsed, minx - 1, miny - 1, maxx + 1, maxy + 1, ones);
 }
 
-int CreateSetup(BacktrackerSearch& srch, std::vector<std::vector<bool> >& solution, const std::vector<unsigned int>& ones)
+int CreateSetup(BacktrackerSearch& srch, std::vector<std::vector<bool> >& solution, const std::vector<unsigned int>& ones, std::vector<std::vector<bool> >& parsed, int& minx, int& miny, int& maxx, int& maxy)
 {
-	std::vector<std::vector<bool> > vec;
-	Init(vec, 150);
-	int minx, miny, maxx, maxy;
-	PlaceState(vec, solution, 5, 5, minx, miny, maxx, maxy);
-	GenerateSetup(srch, vec, minx - 1, miny - 1, maxx + 1, maxy + 1, ones);
+	Init(parsed, 150);
+	PlaceState(parsed, solution, 10, 10, minx, miny, maxx, maxy);
+	GenerateSetup(srch, parsed, minx - 1, miny - 1, maxx + 1, maxy + 1, ones);
 }
 
 void Iterate( BacktrackerSearch& srch,  const std::vector<unsigned int>& ones, std::vector<std::vector<bool> >& solution)
@@ -758,7 +753,12 @@ int main(int argc, char *argv[])
 	
 	BacktrackerSearch srch;
 	srch.Init(&tileMan, curMaxDepth);
-	CreateSetup(srch, argv[1], ones);
+	
+	std::vector<std::vector<bool> > parsed; 
+	int minx, miny, maxx, maxy;
+	
+	
+	CreateSetup(srch, argv[1], ones, parsed, minx, miny, maxx, maxy);
 	
 	for(int i = 0; i < 50; i++)
 	{
@@ -766,10 +766,24 @@ int main(int argc, char *argv[])
 		Iterate(srch, ones, solution);
 		std::cout << "Found solution on Iter: " << i << "\n\n";
 		Print(solution);
+		std::cout << "\n\n goal \n\n";
+		Print(parsed, minx, miny, maxx, maxy);
+		std::cout << "\n\n Iterated \n\n";
+		std::vector<std::vector<bool> > universe; 
+		Init(universe, 150);
+		int minx1, miny1, maxx1, maxy1;
+	
+		PlaceState(universe, solution, 10, 10, minx1, miny1, maxx1, maxy1);
+		Iterate(universe, minx1, miny1, maxx1, maxy1);
+		Print(universe, minx1, miny1, maxx1, maxy1);
 		std::cout << "\n\n";
+		
+		getchar();
+		
 		srch = BacktrackerSearch();
 		srch.Init(&tileMan, curMaxDepth);
-		CreateSetup(srch, solution, ones);
+		Clear(parsed, minx, miny, maxx, maxy);
+		CreateSetup(srch, solution, ones, parsed, minx, miny, maxx, maxy);
 	}
 	
 	std::cout << "Finished...";
